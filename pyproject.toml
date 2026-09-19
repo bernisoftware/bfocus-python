@@ -1,0 +1,40 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "bfocus"
+version = "0.1.0"
+description = "SDK oficial em Python da API pública do bFocus: clientes, produtos, release notes, base de conhecimento e agentes de IA."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [{ name = "Berni Software", email = "tecnologia@bernisoftware.com.br" }]
+keywords = ["bfocus", "sdk", "api", "suporte", "atendimento", "base de conhecimento", "release notes"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Natural Language :: Portuguese (Brazilian)",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Typing :: Typed",
+]
+dependencies = []
+
+[project.urls]
+Homepage = "https://bfocus.com.br"
+Repository = "https://github.com/bernisoftware/bfocus-python"
+
+[tool.hatch.build.targets.wheel]
+packages = ["bfocus"]
+
+[tool.hatch.build.targets.sdist]
+include = ["bfocus", "tests", "examples", "README.md", "LICENSE", "pyproject.toml"]

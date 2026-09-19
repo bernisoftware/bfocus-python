@@ -1,0 +1,119 @@
+# Publica o pacote `bfocus` no PyPI ao dar push de uma tag vX.Y.Z no espelho público
+# bernisoftware/bfocus-python (o scripts/release-sdks.sh do monorepo espelha clients/python
+# e cria a tag).
+#
+# PUBLICAR EXIGE SUÍTE VERDE — no piso e no teto do requires-python, contra a árvore E
+# contra o wheel que vai subir. No bZapper, três versões foram ao PyPI com os envios de
+# mídia quebrados porque o workflow ia direto do build para o upload.
+#
+# Autenticação no PyPI: Trusted Publishing (OIDC), sem segredo guardado. Configure 1x em
+# pypi.org → projeto bfocus → Publishing → "Add a new publisher": owner `bernisoftware`,
+# repo `bfocus-python`, workflow `publish.yml`, environment `pypi`.
+# Prefere token? Crie o secret PYPI_TOKEN (token de projeto) e descomente o `with:` do
+# último passo — o resto do workflow não muda.
+name: publish
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+jobs:
+  # Piso e teto da faixa declarada em pyproject.toml (requires-python >= 3.9).
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: true
+      matrix:
+        python-version: ['3.9', '3.13']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      # Sem dependências: a SDK é stdlib pura e a suíte (conformidade + unitários) também.
+      - run: python -m unittest discover -s tests -v
+
+  build:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      # A tag é a versão publicada. O bump e a tag são passos separados no release-sdks.sh:
+      # se divergirem, o PyPI receberia um número diferente do que a tag promete.
+      - name: A tag bate com o pyproject e com bfocus/_version.py
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          proj="$(python -c "import re,pathlib;print(re.search(r'(?m)^version\s*=\s*\"([^\"]+)\"',pathlib.Path('pyproject.toml').read_text()).group(1))")"
+          code="$(python -c "import re,pathlib;print(re.search(r'__version__\s*=\s*\"([^\"]+)\"',pathlib.Path('bfocus/_version.py').read_text()).group(1))")"
+          [ "$tag" = "$proj" ] || { echo "::error::tag $GITHUB_REF_NAME != pyproject $proj"; exit 1; }
+          [ "$proj" = "$code" ] || { echo "::error::pyproject $proj != bfocus/_version.py $code"; exit 1; }
+          echo "versão $proj confirmada"
+
+      - run: python -m pip install --upgrade build twine
+      - run: python -m build
+      - run: python -m twine check --strict dist/*
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+          if-no-files-found: error
+
+  # A suíte roda de novo, agora contra o WHEEL instalado — pega erro de empacotamento
+  # (módulo que ficou de fora, py.typed ausente). Tudo a partir de /tmp: rodando da raiz
+  # do repo, o ./bfocus do fonte sombrearia o instalado e a verificação viraria teatro.
+  verify-wheel:
+    needs: build
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: true
+      matrix:
+        python-version: ['3.9', '3.13']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - name: Suíte contra o wheel construído
+        run: |
+          python -m venv /tmp/verify
+          /tmp/verify/bin/pip install --quiet dist/*.whl
+          cd /tmp
+          /tmp/verify/bin/python - <<'EOF'
+          import pathlib, bfocus
+          origem = bfocus.__file__
+          print("importado de:", origem)
+          assert "site-packages" in origem, f"importou o fonte, não o wheel: {origem}"
+          assert (pathlib.Path(origem).parent / "py.typed").is_file(), "py.typed fora do wheel"
+          print("versão instalada:", bfocus.__version__)
+          EOF
+          /tmp/verify/bin/python -m unittest discover \
+            -s "$GITHUB_WORKSPACE/tests" -t "$GITHUB_WORKSPACE/tests" -v
+
+  publish:
+    needs: [build, verify-wheel] # sem suíte verde (árvore + wheel) não sobe nada
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/p/bfocus
+    permissions:
+      id-token: write # Trusted Publishing (OIDC)
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        # Para publicar com token em vez de OIDC, descomente:
+        # with:
+        #   password: ${{ secrets.PYPI_TOKEN }}
