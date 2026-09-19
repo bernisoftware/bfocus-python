@@ -9,6 +9,7 @@ Zero dependências (só biblioteca padrão). Python 3.9+.
 """
 
 from ._client import Bfocus
+from ._resources import BATCH_MAX
 from ._transport import CLIENT_ID, DEFAULT_BASE_URL
 from ._version import __version__
 from .errors import (
@@ -23,13 +24,15 @@ from .errors import (
     ValidationError,
 )
 from .types import UNSET, Page
-from .widget import sign_widget_identity
+from .widget import sign_widget_identity, sign_widget_identity_v2
 
 __all__ = [
     "Bfocus",
     "Page",
     "UNSET",
     "sign_widget_identity",
+    "sign_widget_identity_v2",
+    "BATCH_MAX",
     "BfocusError",
     "AuthenticationError",
     "PermissionDeniedError",

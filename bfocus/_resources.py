@@ -1,4 +1,5 @@
-"""Recursos da API pública: ``customers``, ``products``, ``release_notes``, ``kb``, ``ai_agents``.
+"""Recursos da API pública: ``customers``, ``people``, ``products``, ``release_notes``, ``kb``,
+``ai_agents``.
 
 Convenções (iguais em todos os métodos):
 
@@ -33,8 +34,11 @@ from .types import (
     AgentPreview,
     AgentTurn,
     AIAgent,
+    BatchResult,
     Contact,
     Customer,
+    CustomerBatchItem,
+    CustomerWithIdentifiers,
     CustomFieldInput,
     Deleted,
     Interaction,
@@ -45,6 +49,10 @@ from .types import (
     KBSearchHit,
     MaybeUnset,
     Page,
+    Person,
+    PersonBatchItem,
+    PersonIdentifiers,
+    PersonUpsertResult,
     Product,
     ProductRef,
     ReleaseNote,
@@ -54,10 +62,14 @@ T = TypeVar("T")
 DateLike = Union[datetime, date, str]
 
 __all__ = [
+    "BATCH_MAX",
     "Customers",
     "CustomerContacts",
     "CustomerProducts",
     "CustomerInteractions",
+    "CustomerIdentifiers",
+    "People",
+    "PeopleIdentifiers",
     "Products",
     "ReleaseNotes",
     "KnowledgeBase",
@@ -95,6 +107,56 @@ def _dicts(value: Any) -> Any:
     if value is UNSET or value is None:
         return value
     return [dict(item) for item in value]
+
+
+#: Máximo de itens por chamada de ``customers.batch`` e ``people.batch`` (limite da API).
+#: Acima disso a SDK levanta ``ValueError`` antes de chamar a API — ela NÃO divide sozinha,
+#: porque o ``index`` de cada resultado é a posição no lote que você enviou.
+BATCH_MAX = 500
+
+
+def _empty_batch() -> BatchResult:
+    return cast(
+        BatchResult,
+        {"results": [], "summary": {"created": 0, "updated": 0, "unchanged": 0, "error": 0}},
+    )
+
+
+def _batch_items(op: str, items: Any) -> List[Mapping[str, Any]]:
+    """Valida o lote (tipo, tamanho) antes de qualquer requisição."""
+    if isinstance(items, (str, bytes, Mapping)):
+        raise TypeError(f"{op}: items precisa ser uma lista de dicts.")
+    batch = list(items)
+    if len(batch) > BATCH_MAX:
+        raise ValueError(
+            f"{op} aceita até {BATCH_MAX} itens por chamada (recebeu {len(batch)}); "
+            f"divida em lotes de {BATCH_MAX}."
+        )
+    for index, item in enumerate(batch):
+        if not isinstance(item, Mapping):
+            raise TypeError(f"{op}: items[{index}] precisa ser um dict.")
+    return batch
+
+
+def _required_id(op: str, index: int, item: Mapping[str, Any], field: str) -> str:
+    value = item.get(field)
+    if not isinstance(value, str) or not value:
+        raise ValueError(f"{op}: items[{index}].{field} é obrigatório.")
+    return value
+
+
+def _identifier_label(label: Any) -> Optional[Dict[str, Any]]:
+    """Corpo de ``identifiers.add``: ``{"label": ...}`` só se veio; senão, sem corpo."""
+    return None if label is UNSET else {"label": label}
+
+
+def _strings(value: Any) -> Any:
+    """Sequência de strings → lista (preserva UNSET/None). String solta é erro (viraria letras)."""
+    if value is UNSET or value is None:
+        return value
+    if isinstance(value, (str, bytes)):
+        raise TypeError("extra_emails/extra_phones precisam ser uma lista de strings.")
+    return list(value)
 
 
 class _Resource:
@@ -286,17 +348,71 @@ class CustomerInteractions(_Resource):
         return cast(Interaction, data)
 
 
+class CustomerIdentifiers(_Resource):
+    """Identificadores extras de um cliente — ``client.customers.identifiers``.
+
+    Liga o id de OUTRO sistema seu (CRM, e-commerce…) ao mesmo cadastro, sem duplicar.
+    """
+
+    def add(
+        self,
+        external_id: str,
+        extra_id: str,
+        *,
+        label: MaybeUnset[Optional[str]] = UNSET,
+        idempotency_key: Optional[str] = None,
+        timeout: Optional[float] = None,
+    ) -> CustomerWithIdentifiers:
+        """Liga ``extra_id`` ao cliente (idempotente). ``PUT /customers/{external_id}/identifiers/{extra_id}``
+
+        Se ``extra_id`` já é de outro cadastro: ``ConflictError`` com ``code ==
+        "IDENTIFIER_IN_USE"``.
+
+        Args:
+            label: Rótulo livre (ex.: nome do sistema). Não informado = requisição sem corpo.
+        """
+        ext = path_segment(external_id, "external_id")
+        extra = path_segment(extra_id, "extra_id")
+        data, _ = self._t.request(
+            "PUT", f"/customers/{ext}/identifiers/{extra}", body=_identifier_label(label),
+            idempotency_key=idempotency_key, timeout=timeout,
+        )
+        return cast(CustomerWithIdentifiers, data)
+
+    def remove(
+        self,
+        external_id: str,
+        extra_id: str,
+        *,
+        idempotency_key: Optional[str] = None,
+        timeout: Optional[float] = None,
+    ) -> CustomerWithIdentifiers:
+        """Desliga um identificador extra. ``DELETE /customers/{external_id}/identifiers/{extra_id}``"""
+        ext = path_segment(external_id, "external_id")
+        extra = path_segment(extra_id, "extra_id")
+        data, _ = self._t.request(
+            "DELETE", f"/customers/{ext}/identifiers/{extra}",
+            idempotency_key=idempotency_key, timeout=timeout,
+        )
+        return cast(CustomerWithIdentifiers, data)
+
+
 class Customers(_Resource):
     """Clientes (empresas) — ``client.customers``.
 
-    Sub-recursos: :attr:`contacts`, :attr:`products`, :attr:`interactions`.
+    Sub-recursos: :attr:`contacts`, :attr:`products`, :attr:`interactions`,
+    :attr:`identifiers`.
     """
+
+    #: Máximo de itens por chamada de :meth:`batch` (igual a :data:`BATCH_MAX`).
+    BATCH_MAX = BATCH_MAX
 
     def __init__(self, transport: Transport) -> None:
         super().__init__(transport)
         self.contacts = CustomerContacts(transport)
         self.products = CustomerProducts(transport)
         self.interactions = CustomerInteractions(transport)
+        self.identifiers = CustomerIdentifiers(transport)
 
     def upsert(
         self,
@@ -397,6 +513,216 @@ class Customers(_Resource):
             "DELETE", f"/customers/{ext}", idempotency_key=idempotency_key, timeout=timeout
         )
         return cast(Deleted, data)
+
+    def batch(
+        self,
+        items: Sequence[Union[CustomerBatchItem, Mapping[str, Any]]],
+        *,
+        idempotency_key: Optional[str] = None,
+        timeout: Optional[float] = None,
+    ) -> BatchResult:
+        """Cria/atualiza até **500** clientes numa chamada. ``POST /customers/batch``
+
+        Cada item tem os campos do :meth:`upsert` + ``external_id`` (obrigatório); a regra é
+        a mesma: chave ausente = não muda, ``None`` = ``null`` (limpa). Devolve um resultado
+        por item (``index`` = posição no lote enviado) + ``summary``. Um item com erro não
+        desfaz os outros.
+
+        Mais de 500 itens → ``ValueError`` antes de chamar a API (divida em fatias de
+        :data:`BATCH_MAX`). Lista vazia → resultado zerado, sem requisição.
+        """
+        op = "customers.batch"
+        body_items: List[Dict[str, Any]] = []
+        for index, item in enumerate(_batch_items(op, items)):
+            _required_id(op, index, item, "external_id")
+            entry = compact(item)
+            if "custom_fields" in entry:
+                entry["custom_fields"] = _dicts(entry["custom_fields"])
+            body_items.append(entry)
+        if not body_items:
+            return _empty_batch()
+        data, _ = self._t.request(
+            "POST", "/customers/batch", body={"items": body_items},
+            idempotency_key=idempotency_key, timeout=timeout,
+        )
+        return cast(BatchResult, data)
+
+
+# ── pessoas ─────────────────────────────────────────────────────────────────────
+
+
+class PeopleIdentifiers(_Resource):
+    """Identificadores extras de uma pessoa — ``client.people.identifiers``."""
+
+    def add(
+        self,
+        person_external_id: str,
+        extra_id: str,
+        *,
+        label: MaybeUnset[Optional[str]] = UNSET,
+        idempotency_key: Optional[str] = None,
+        timeout: Optional[float] = None,
+    ) -> PersonIdentifiers:
+        """Liga ``extra_id`` à pessoa (idempotente). ``PUT /people/{person_external_id}/identifiers/{extra_id}``
+
+        Se ``extra_id`` já é de outra pessoa: ``ConflictError`` com ``code ==
+        "IDENTIFIER_IN_USE"``.
+
+        Args:
+            label: Rótulo livre (ex.: nome do sistema). Não informado = requisição sem corpo.
+        """
+        pid = path_segment(person_external_id, "person_external_id")
+        extra = path_segment(extra_id, "extra_id")
+        data, _ = self._t.request(
+            "PUT", f"/people/{pid}/identifiers/{extra}", body=_identifier_label(label),
+            idempotency_key=idempotency_key, timeout=timeout,
+        )
+        return cast(PersonIdentifiers, data)
+
+    def remove(
+        self,
+        person_external_id: str,
+        extra_id: str,
+        *,
+        idempotency_key: Optional[str] = None,
+        timeout: Optional[float] = None,
+    ) -> PersonIdentifiers:
+        """Desliga um identificador extra. ``DELETE /people/{person_external_id}/identifiers/{extra_id}``"""
+        pid = path_segment(person_external_id, "person_external_id")
+        extra = path_segment(extra_id, "extra_id")
+        data, _ = self._t.request(
+            "DELETE", f"/people/{pid}/identifiers/{extra}",
+            idempotency_key=idempotency_key, timeout=timeout,
+        )
+        return cast(PersonIdentifiers, data)
+
+
+class People(_Resource):
+    """Pessoas dos clientes (quem abre chamados/conversas) — ``client.people``.
+
+    O ``external_id`` da pessoa é o mesmo ``user.externalId`` assinado no widget — por isso
+    não pode ter ``:`` se for assinado. Sub-recurso: :attr:`identifiers`.
+    """
+
+    #: Máximo de itens por chamada de :meth:`batch` (igual a :data:`BATCH_MAX`).
+    BATCH_MAX = BATCH_MAX
+
+    def __init__(self, transport: Transport) -> None:
+        super().__init__(transport)
+        self.identifiers = PeopleIdentifiers(transport)
+
+    def upsert(
+        self,
+        customer_external_id: str,
+        person_external_id: str,
+        *,
+        name: MaybeUnset[Optional[str]] = UNSET,
+        email: MaybeUnset[Optional[str]] = UNSET,
+        phone: MaybeUnset[Optional[str]] = UNSET,
+        role: MaybeUnset[Optional[str]] = UNSET,
+        access: MaybeUnset[Optional[bool]] = UNSET,
+        is_primary: MaybeUnset[Optional[bool]] = UNSET,
+        extra_emails: MaybeUnset[Optional[Sequence[str]]] = UNSET,
+        extra_phones: MaybeUnset[Optional[Sequence[str]]] = UNSET,
+        idempotency_key: Optional[str] = None,
+        timeout: Optional[float] = None,
+    ) -> PersonUpsertResult:
+        """Cria ou atualiza uma pessoa do cliente pelo ``external_id`` dela. Só o que vier muda.
+
+        ``PUT /customers/{customer_external_id}/people/{person_external_id}``. O ``status``
+        do retorno diz ``"created"``, ``"updated"`` ou ``"unchanged"``. Se o e-mail (ou o
+        telefone) já pertence a uma pessoa que chegou por outro caminho, ela é **adotada**
+        (nunca duplicada); a mesma pessoa informada com outro cliente é transferida.
+
+        Args:
+            name: Obrigatório ao criar.
+            access: Acesso ao widget/portal (padrão ao criar: ``True``). ``True`` devolve o
+                acesso retirado por :meth:`delete`.
+            extra_emails: E-mails adicionais (somam aos que já existem).
+            extra_phones: Telefones adicionais (somam aos que já existem).
+        """
+        cext = path_segment(customer_external_id, "customer_external_id")
+        pid = path_segment(person_external_id, "person_external_id")
+        person = compact(
+            {
+                "name": name,
+                "email": email,
+                "phone": phone,
+                "role": role,
+                "access": access,
+                "is_primary": is_primary,
+                "extra_emails": _strings(extra_emails),
+                "extra_phones": _strings(extra_phones),
+            }
+        )
+        data, _ = self._t.request(
+            "PUT", f"/customers/{cext}/people/{pid}", body={"person": person},
+            idempotency_key=idempotency_key, timeout=timeout,
+        )
+        return cast(PersonUpsertResult, data)
+
+    def list(self, customer_external_id: str, *, timeout: Optional[float] = None) -> List[Person]:
+        """Pessoas do cliente. ``GET /customers/{customer_external_id}/people``"""
+        cext = path_segment(customer_external_id, "customer_external_id")
+        data, _ = self._t.request("GET", f"/customers/{cext}/people", timeout=timeout)
+        return cast(List[Person], data)
+
+    def delete(
+        self,
+        customer_external_id: str,
+        person_external_id: str,
+        *,
+        idempotency_key: Optional[str] = None,
+        timeout: Optional[float] = None,
+    ) -> Person:
+        """Retira o acesso da pessoa (devolve a pessoa com ``access=False``).
+
+        ``DELETE /customers/{customer_external_id}/people/{person_external_id}``. A pessoa
+        continua no histórico (chamados, conversas); :meth:`upsert` com ``access=True``
+        devolve o acesso.
+        """
+        cext = path_segment(customer_external_id, "customer_external_id")
+        pid = path_segment(person_external_id, "person_external_id")
+        data, _ = self._t.request(
+            "DELETE", f"/customers/{cext}/people/{pid}",
+            idempotency_key=idempotency_key, timeout=timeout,
+        )
+        return cast(Person, data)
+
+    def batch(
+        self,
+        items: Sequence[Union[PersonBatchItem, Mapping[str, Any]]],
+        *,
+        idempotency_key: Optional[str] = None,
+        timeout: Optional[float] = None,
+    ) -> BatchResult:
+        """Cria/atualiza até **500** pessoas numa chamada. ``POST /people/batch``
+
+        Cada item é plano: ``customer_external_id`` + ``external_id`` da pessoa (ambos
+        obrigatórios) + os campos do :meth:`upsert` (chave ausente = não muda). No fio a
+        SDK envia ``{"customer_external_id": ..., "person": {"external_id": ..., ...}}``.
+        Devolve um resultado por item (``index`` = posição no lote enviado) + ``summary``.
+
+        Mais de 500 itens → ``ValueError`` antes de chamar a API (divida em fatias de
+        :data:`BATCH_MAX`). Lista vazia → resultado zerado, sem requisição.
+        """
+        op = "people.batch"
+        body_items: List[Dict[str, Any]] = []
+        for index, item in enumerate(_batch_items(op, items)):
+            customer = _required_id(op, index, item, "customer_external_id")
+            _required_id(op, index, item, "external_id")
+            person = compact({k: v for k, v in item.items() if k != "customer_external_id"})
+            for field in ("extra_emails", "extra_phones"):
+                if field in person:
+                    person[field] = _strings(person[field])
+            body_items.append({"customer_external_id": customer, "person": person})
+        if not body_items:
+            return _empty_batch()
+        data, _ = self._t.request(
+            "POST", "/people/batch", body={"items": body_items},
+            idempotency_key=idempotency_key, timeout=timeout,
+        )
+        return cast(BatchResult, data)
 
 
 # ── produtos ────────────────────────────────────────────────────────────────────

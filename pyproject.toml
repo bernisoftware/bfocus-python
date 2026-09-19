@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "bfocus"
-version = "0.1.0"
+version = "0.2.0"
 description = "SDK oficial em Python da API pública do bFocus: clientes, produtos, release notes, base de conhecimento e agentes de IA."
 readme = "README.md"
 requires-python = ">=3.9"

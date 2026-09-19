@@ -16,6 +16,8 @@ __all__ = [
     # entradas
     "CustomFieldInput",
     "KBBatchItem",
+    "CustomerBatchItem",
+    "PersonBatchItem",
     "AgentTurn",
     # saídas
     "CustomField",
@@ -33,6 +35,14 @@ __all__ = [
     "AIAgent",
     "AgentPreview",
     "Deleted",
+    "Person",
+    "PersonUpsertResult",
+    "Identifier",
+    "CustomerWithIdentifiers",
+    "PersonIdentifiers",
+    "BatchItemResult",
+    "BatchSummary",
+    "BatchResult",
 ]
 
 T = TypeVar("T")
@@ -137,6 +147,47 @@ class KBBatchItem(_KBBatchItemRequired, total=False):
     body_markdown: Optional[str]
     product: Optional[str]
     status: Optional[Literal["draft", "published"]]
+
+
+class _CustomerBatchItemRequired(TypedDict):
+    external_id: str
+
+
+class CustomerBatchItem(_CustomerBatchItemRequired, total=False):
+    """Item do ``customers.batch``: os campos do ``customers.upsert`` + ``external_id``.
+
+    Chave ausente = não muda; ``None`` explícito vai como ``null`` e limpa o campo.
+    """
+
+    name: Optional[str]
+    document: Optional[str]
+    email: Optional[str]
+    phone: Optional[str]
+    website: Optional[str]
+    notes: Optional[str]
+    custom_fields: Optional[List[CustomFieldInput]]
+
+
+class _PersonBatchItemRequired(TypedDict):
+    customer_external_id: str
+    external_id: str
+
+
+class PersonBatchItem(_PersonBatchItemRequired, total=False):
+    """Item do ``people.batch``: o cliente, o ``external_id`` da pessoa e os campos dela.
+
+    Plano para quem chama; no fio a SDK envia
+    ``{"customer_external_id": ..., "person": {"external_id": ..., ...campos}}``.
+    """
+
+    name: Optional[str]
+    email: Optional[str]
+    phone: Optional[str]
+    role: Optional[str]
+    access: Optional[bool]
+    is_primary: Optional[bool]
+    extra_emails: Optional[List[str]]
+    extra_phones: Optional[List[str]]
 
 
 class AgentTurn(TypedDict):
@@ -308,3 +359,74 @@ class AgentPreview(TypedDict):
 
 class Deleted(TypedDict):
     deleted: bool
+
+
+class Person(TypedDict):
+    """Pessoa de um cliente (quem abre o widget/portal).
+
+    ``external_id`` ``None`` = contato do cliente sem identificador (sem acesso).
+    """
+
+    external_id: Optional[str]
+    name: str
+    email: Optional[str]
+    phone: Optional[str]
+    role: Optional[str]
+    access: bool
+    is_primary: bool
+    customer_external_id: str
+
+
+class PersonUpsertResult(Person):
+    """Retorno de ``people.upsert``: a pessoa + ``status``."""
+
+    status: Literal["created", "updated", "unchanged"]
+
+
+class Identifier(TypedDict):
+    """Identificador extra (id de outro sistema seu ligado ao mesmo cadastro)."""
+
+    external_id: str
+    label: Optional[str]
+    source: str
+
+
+class CustomerWithIdentifiers(Customer):
+    """Cliente + identificadores extras (o principal é ``external_id``)."""
+
+    identifiers: List[Identifier]
+
+
+class PersonIdentifiers(TypedDict):
+    external_id: Optional[str]
+    identifiers: List[Identifier]
+
+
+class BatchItemResult(TypedDict):
+    """Resultado de um item de ``customers.batch``/``people.batch``.
+
+    ``index`` é a posição no lote enviado (0 = primeiro). ``merged_into`` preenchido = o id
+    enviado é extra e este é o principal do cadastro. Em erro: ``error`` (código estável) e
+    ``code`` (status HTTP que o item teria sozinho).
+    """
+
+    index: int
+    status: Literal["created", "updated", "unchanged", "error"]
+    external_id: Optional[str]
+    merged_into: Optional[str]
+    error: Optional[str]
+    code: Optional[int]
+
+
+class BatchSummary(TypedDict):
+    created: int
+    updated: int
+    unchanged: int
+    error: int
+
+
+class BatchResult(TypedDict):
+    """Retorno de ``customers.batch``/``people.batch``: um resultado por item + contadores."""
+
+    results: List[BatchItemResult]
+    summary: BatchSummary

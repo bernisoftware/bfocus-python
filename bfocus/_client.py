@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from typing import Any, Callable
 
-from ._resources import AIAgents, Customers, KnowledgeBase, Products, ReleaseNotes
+from ._resources import AIAgents, Customers, KnowledgeBase, People, Products, ReleaseNotes
 from ._transport import DEFAULT_BASE_URL, DEFAULT_MAX_RETRIES, DEFAULT_TIMEOUT, Transport
-from .widget import sign_widget_identity
+from .widget import sign_widget_identity, sign_widget_identity_v2
 
 __all__ = ["Bfocus"]
 
@@ -33,6 +33,8 @@ class Bfocus:
 
     #: Também disponível como função do pacote: ``from bfocus import sign_widget_identity``.
     sign_widget_identity = staticmethod(sign_widget_identity)
+    #: Também disponível como função do pacote: ``from bfocus import sign_widget_identity_v2``.
+    sign_widget_identity_v2 = staticmethod(sign_widget_identity_v2)
 
     def __init__(
         self,
@@ -57,8 +59,11 @@ class Bfocus:
             timeout=float(timeout),
             max_retries=max_retries,
         )
-        #: Clientes (empresas), com ``.contacts``, ``.products`` e ``.interactions``.
+        #: Clientes (empresas), com ``.contacts``, ``.products``, ``.interactions`` e
+        #: ``.identifiers``.
         self.customers = Customers(self._transport)
+        #: Pessoas dos clientes (quem abre chamados/conversas), com ``.identifiers``.
+        self.people = People(self._transport)
         #: Catálogo de produtos.
         self.products = Products(self._transport)
         #: Release notes por produto.

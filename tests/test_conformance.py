@@ -19,7 +19,7 @@ import unittest
 from typing import Any, Callable, Dict
 
 import bfocus
-from bfocus import Bfocus, Page, errors, sign_widget_identity
+from bfocus import Bfocus, Page, errors, sign_widget_identity, sign_widget_identity_v2
 
 from _support import (
     MONOREPO_CASES,
@@ -55,6 +55,15 @@ OPS: Dict[str, Callable[[Bfocus], Callable[..., Any]]] = {
     "customers.interactions.list": lambda bf: bf.customers.interactions.list,
     "customers.interactions.list_all": lambda bf: bf.customers.interactions.list_all,
     "customers.interactions.create": lambda bf: bf.customers.interactions.create,
+    "customers.batch": lambda bf: bf.customers.batch,
+    "customers.identifiers.add": lambda bf: bf.customers.identifiers.add,
+    "customers.identifiers.remove": lambda bf: bf.customers.identifiers.remove,
+    "people.upsert": lambda bf: bf.people.upsert,
+    "people.list": lambda bf: bf.people.list,
+    "people.delete": lambda bf: bf.people.delete,
+    "people.batch": lambda bf: bf.people.batch,
+    "people.identifiers.add": lambda bf: bf.people.identifiers.add,
+    "people.identifiers.remove": lambda bf: bf.people.identifiers.remove,
     "products.list": lambda bf: bf.products.list,
     "products.get": lambda bf: bf.products.get,
     "products.upsert": lambda bf: bf.products.upsert,
@@ -288,6 +297,19 @@ class SignatureVectorsTest(unittest.TestCase):
                         vector["secret"], vector["user_external_id"],
                         vector["customer_external_id"],
                     ),
+                    vector["expected"],
+                )
+
+    def test_vetores_v2(self) -> None:
+        self.assertTrue(CASES["signatures_v2"])
+        for vector in CASES["signatures_v2"]:
+            with self.subTest(user=vector["user_external_id"]):
+                args = (vector["secret"], vector["user_external_id"],
+                        vector["customer_external_id"])
+                got = sign_widget_identity_v2(*args, now=vector["timestamp"])
+                self.assertEqual(got, vector["expected"])
+                self.assertEqual(
+                    Bfocus.sign_widget_identity_v2(*args, now=vector["timestamp"]),
                     vector["expected"],
                 )
 

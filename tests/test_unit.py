@@ -11,6 +11,7 @@ from datetime import date, datetime, timedelta, timezone
 from email.utils import format_datetime
 
 from bfocus import (
+    BATCH_MAX,
     UNSET,
     Bfocus,
     BfocusError,
@@ -19,6 +20,7 @@ from bfocus import (
     RateLimitError,
     ServerError,
     sign_widget_identity,
+    sign_widget_identity_v2,
 )
 from bfocus._transport import parse_retry_after
 
@@ -472,6 +474,135 @@ class ErrorShapeTest(_ServerCase):
             bf.products.list()
         self.assertEqual(ctx.exception.code, "TENANT_NOT_FOUND")
         self.assertEqual(ctx.exception.validation, {})
+
+
+def _batch_ok(n: int) -> dict:
+    return ok({
+        "results": [
+            {"index": i, "status": "created", "external_id": f"x{i}", "merged_into": None,
+             "error": None, "code": None}
+            for i in range(n)
+        ],
+        "summary": {"created": n, "updated": 0, "unchanged": 0, "error": 0},
+    })
+
+
+class PeopleAndBatchTest(_ServerCase):
+    def test_limite_de_500_sem_requisicao(self) -> None:
+        self.assertEqual(BATCH_MAX, 500)
+        bf = self.client([])
+        customers = [{"external_id": f"erp-{i}", "name": f"C{i}"} for i in range(501)]
+        people = [{"customer_external_id": "erp-1", "external_id": f"app-{i}", "name": "P"}
+                  for i in range(501)]
+        with self.assertRaises(ValueError) as ctx:
+            bf.customers.batch(customers)
+        self.assertIn("customers.batch aceita até 500 itens por chamada (recebeu 501)",
+                      str(ctx.exception))
+        with self.assertRaises(ValueError) as ctx:
+            bf.people.batch(people)
+        self.assertIn("people.batch aceita até 500 itens por chamada (recebeu 501)",
+                      str(ctx.exception))
+        self.assertEqual(self.requests, [])
+
+    def test_500_vai_em_uma_requisicao(self) -> None:
+        customers = [{"external_id": f"erp-{i}", "name": f"C{i}"} for i in range(500)]
+        people = [{"customer_external_id": "erp-1", "external_id": f"app-{i}"}
+                  for i in range(500)]
+        bf = self.client([_batch_ok(500), _batch_ok(500)])
+        out = bf.customers.batch(customers)
+        bf.people.batch(people)
+        self.assertEqual(len(self.requests), 2)
+        self.assertEqual([r["path"] for r in self.requests],
+                         ["/api/v1/integration/customers/batch",
+                          "/api/v1/integration/people/batch"])
+        self.assertEqual([len(json_body(r)["items"]) for r in self.requests], [500, 500])
+        self.assertEqual(out["summary"]["created"], 500)
+        self.assertEqual(json_body(self.requests[1])["items"][0],
+                         {"customer_external_id": "erp-1", "person": {"external_id": "app-0"}})
+
+    def test_lote_vazio_nao_chama_a_api(self) -> None:
+        bf = self.client([])
+        empty = {"results": [], "summary": {"created": 0, "updated": 0, "unchanged": 0,
+                                            "error": 0}}
+        self.assertEqual(bf.customers.batch([]), empty)
+        self.assertEqual(bf.people.batch(iter([])), empty)
+        self.assertEqual(self.requests, [])
+
+    def test_lote_valida_itens_antes_de_enviar(self) -> None:
+        bf = self.client([])
+        with self.assertRaises(ValueError):
+            bf.customers.batch([{"external_id": "ok"}, {"name": "sem id"}])
+        with self.assertRaises(ValueError):
+            bf.people.batch([{"external_id": "app-1"}])  # sem customer_external_id
+        with self.assertRaises(TypeError):
+            bf.people.batch(["app-1"])
+        with self.assertRaises(TypeError):
+            bf.customers.batch({"external_id": "x"})
+        self.assertEqual(self.requests, [])
+
+    def test_lote_idempotency_key_e_omitido_x_null(self) -> None:
+        bf = self.client([_batch_ok(1)])
+        bf.customers.batch([{"external_id": "erp-1", "phone": None, "notes": UNSET}],
+                           idempotency_key="carga-1")
+        self.assertEqual(self.requests[0]["headers"]["idempotency-key"], "carga-1")
+        self.assertEqual(json_body(self.requests[0]),
+                         {"items": [{"external_id": "erp-1", "phone": None}]})
+
+    def test_people_upsert_corpo_e_caminho(self) -> None:
+        bf = self.client([ok({"external_id": "app-1", "status": "updated"})])
+        bf.people.upsert("erp 1042", "app 1", access=True, extra_phones=("+55 11 9",),
+                         email=None)
+        record = self.requests[0]
+        self.assertEqual(record["path"], "/api/v1/integration/customers/erp%201042/people/app%201")
+        self.assertEqual(json_body(record),
+                         {"person": {"access": True, "email": None,
+                                     "extra_phones": ["+55 11 9"]}})
+        with self.assertRaises(TypeError):
+            bf.people.upsert("erp-1", "app-1", extra_emails="a@b.example")
+        with self.assertRaises(ValueError):
+            bf.people.upsert("erp-1", "..")
+
+    def test_identifiers_label_none_explicito(self) -> None:
+        bf = self.client([ok({"external_id": "app-1", "identifiers": []})])
+        bf.people.identifiers.add("app-1", "crm-5", label=None)
+        self.assertEqual(json_body(self.requests[0]), {"label": None})
+
+
+class SignatureV2Test(unittest.TestCase):
+    VECTOR = ("bf_whs_x", "USR-1", "ACME-1")
+    EXPECTED = "v2.1789000000.bfbf2a0390fbb9d65f268899acce2b4d7a2606ba13bb25b453ff3a7971fbd7be"
+
+    def test_instante_int_float_datetime(self) -> None:
+        self.assertEqual(sign_widget_identity_v2(*self.VECTOR, now=1789000000), self.EXPECTED)
+        self.assertEqual(sign_widget_identity_v2(*self.VECTOR, now=1789000000.9), self.EXPECTED)
+        when = datetime.fromtimestamp(1789000000, tz=timezone.utc)
+        self.assertEqual(sign_widget_identity_v2(*self.VECTOR, now=when), self.EXPECTED)
+        self.assertEqual(sign_widget_identity_v2(*self.VECTOR, now=when.replace(tzinfo=None)),
+                         self.EXPECTED)
+        brt = when.astimezone(timezone(timedelta(hours=-3)))
+        self.assertEqual(sign_widget_identity_v2(*self.VECTOR, now=brt), self.EXPECTED)
+
+    def test_padrao_e_agora(self) -> None:
+        got = sign_widget_identity_v2(*self.VECTOR)
+        prefix, ts, digest = got.split(".")
+        self.assertEqual(prefix, "v2")
+        self.assertLessEqual(abs(int(ts) - time.time()), 5)
+        self.assertRegex(digest, r"^[0-9a-f]{64}$")
+        self.assertEqual(got, sign_widget_identity_v2(*self.VECTOR, now=int(ts)))
+
+    def test_validacao(self) -> None:
+        with self.assertRaises(ValueError):
+            sign_widget_identity_v2("bf_whs_x", "app:1", "ACME-1")
+        self.assertTrue(sign_widget_identity_v2("bf_whs_x", "app-1", "erp-1042", now=1)
+                        .startswith("v2.1."))
+        with self.assertRaises(ValueError):
+            sign_widget_identity_v2("", "USR-1", "ACME-1")
+        with self.assertRaises(ValueError):
+            sign_widget_identity_v2("bf_whs_x", "USR-1", "ACME-1", now=-1)
+        with self.assertRaises(TypeError):
+            sign_widget_identity_v2("bf_whs_x", "USR-1", "ACME-1", now="1789000000")  # type: ignore[arg-type]
+        with self.assertRaises(TypeError):
+            sign_widget_identity_v2("bf_whs_x", "USR-1", "ACME-1", 1789000000)  # type: ignore[misc]
 
 
 if __name__ == "__main__":

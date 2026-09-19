@@ -1,7 +1,7 @@
 # bfocus
 
-SDK oficial em **Python** da API pública do [bFocus](https://bfocus.com.br): clientes, produtos,
-release notes, base de conhecimento e agentes de IA.
+SDK oficial em **Python** da API pública do [bFocus](https://bfocus.com.br): clientes, pessoas dos
+clientes, produtos, release notes, base de conhecimento e agentes de IA.
 
 Zero dependências (só biblioteca padrão) · Python 3.9+ · tipada (`py.typed`) · novas tentativas e
 idempotência automáticas.
@@ -32,8 +32,8 @@ integração precisa. Ela vai em `Authorization: Bearer <chave>` em toda requisi
 
 | Escopo | Permite |
 | --- | --- |
-| `customers:read` | Ler clientes, contatos, produtos vinculados e interações |
-| `customers:write` | Cadastrar, atualizar e excluir clientes, contatos e interações |
+| `customers:read` | Ler clientes, contatos, pessoas, produtos vinculados e interações |
+| `customers:write` | Cadastrar, atualizar e excluir clientes, contatos, pessoas, identificadores extras e interações (inclui os lotes) |
 | `products:read` | Ler o catálogo de produtos |
 | `products:write` | Cadastrar, atualizar e arquivar produtos |
 | `kb:read` | Ler e buscar artigos da base de conhecimento |
@@ -81,6 +81,24 @@ Construir o cliente não faz nenhuma chamada de rede.
 - Datas (`updated_since`) aceitam `datetime` — convertido para ISO 8601 em UTC com `Z`; sem fuso é
   tratado como UTC — ou string, que passa como veio.
 
+## Recursos e métodos
+
+| Recurso | Métodos |
+| --- | --- |
+| `bf.customers` | `upsert`, `get`, `list`, `list_all`, `delete`, `batch` |
+| `bf.customers.contacts` | `list`, `upsert`, `delete` |
+| `bf.customers.products` | `list`, `attach`, `detach` |
+| `bf.customers.interactions` | `list`, `list_all`, `create` |
+| `bf.customers.identifiers` | `add`, `remove` |
+| `bf.people` | `upsert`, `list`, `delete`, `batch` |
+| `bf.people.identifiers` | `add`, `remove` |
+| `bf.products` | `list`, `get`, `upsert`, `archive` |
+| `bf.release_notes` | `list`, `list_all`, `get`, `upsert`, `publish` |
+| `bf.kb` | `search` |
+| `bf.kb.articles` | `list`, `list_all`, `get`, `upsert`, `batch_upsert`, `publish`, `unpublish`, `delete` |
+| `bf.ai_agents` | `list`, `get`, `preview` |
+| `bfocus` (funções) | `sign_widget_identity`, `sign_widget_identity_v2` (locais, sem rede) |
+
 ## Clientes
 
 ```python
@@ -122,6 +140,174 @@ bf.customers.interactions.create("ERP 1042", "Pedido 1042 faturado.",
                                  author_email="carla@suaempresa.com.br")
 for i in bf.customers.interactions.list_all("ERP 1042"):
     print(i["created_at"], i["content"])
+```
+
+## Pessoas
+
+Pessoas são quem usa o sistema do seu cliente e abre chamados/conversas no widget. O
+`external_id` da pessoa é o mesmo `user_external_id` que você assina para o widget — por isso
+**não pode ter `:`**.
+
+```python
+p = bf.people.upsert(
+    "erp-1042",                 # o cliente
+    "app-77",                   # a pessoa (o usuário no seu sistema)
+    name="Paula Reis",
+    email="paula@padaria.example",
+    role="Financeiro",
+    is_primary=True,
+    extra_emails=["paula.reis@pessoal.example"],  # somam aos que já existem
+)
+print(p["status"])              # "created", "updated" ou "unchanged"
+
+for pessoa in bf.people.list("erp-1042"):
+    print(pessoa["name"], pessoa["access"])
+
+bf.people.delete("erp-1042", "app-77")                # retira o acesso
+bf.people.upsert("erp-1042", "app-77", access=True)   # devolve o acesso
+```
+
+- **Nunca duplica**: se o e-mail (ou o telefone) já pertence a uma pessoa que chegou por e-mail
+  ou por outro sistema, ela é **adotada** e ganha o seu `external_id`.
+- A mesma pessoa informada com **outro cliente** é transferida para ele.
+- `delete` **retira o acesso** (devolve a pessoa com `access=False`); ela continua no histórico
+  de chamados e conversas. Um `upsert` com `access=True` devolve o acesso.
+- Como nos outros upserts, só o que você passa muda; `name` é obrigatório ao criar.
+
+## Lotes
+
+`customers.batch` e `people.batch` criam/atualizam **até 500 itens por chamada** (`bfocus.BATCH_MAX`).
+Acima disso a SDK levanta `ValueError` antes de chamar a API — ela **não** divide sozinha, porque
+o `index` de cada resultado é a posição no lote que você enviou. Divida em fatias:
+
+```python
+from bfocus import BATCH_MAX
+
+clientes = [
+    {"external_id": "erp-1042", "name": "Padaria Estrela", "document": "12.345.678/0001-90"},
+    {"external_id": "erp-1043", "name": "Mercado Sol", "email": "contato@mercadosol.example"},
+    # ... quantos forem
+]
+
+for inicio in range(0, len(clientes), BATCH_MAX):
+    fatia = clientes[inicio:inicio + BATCH_MAX]
+    res = bf.customers.batch(fatia)
+    print(res["summary"])  # {"created": 1, "updated": 1, "unchanged": 0, "error": 0}
+    for r in res["results"]:
+        if r["status"] == "error":
+            item = fatia[r["index"]]             # index = posição NESTA fatia
+            print("falhou:", item["external_id"], r["error"], r["code"])  # ex.: NAME_REQUIRED 422
+        elif r["merged_into"]:
+            print(fatia[r["index"]]["external_id"], "é extra; o principal é", r["merged_into"])
+```
+
+- Item de `customers.batch`: os campos do `customers.upsert` + `external_id` (obrigatório).
+  Chave ausente não muda; `None` limpa.
+- Item de `people.batch` (plano): `customer_external_id` + `external_id` da pessoa + os campos
+  do `people.upsert`:
+
+  ```python
+  bf.people.batch([
+      {"customer_external_id": "erp-1042", "external_id": "app-77",
+       "name": "Paula Reis", "email": "paula@padaria.example", "is_primary": True},
+      {"customer_external_id": "erp-1043", "external_id": "app-78", "name": "Rui Lima"},
+  ])
+  ```
+
+- Resultado por item: `index`, `status` (`created`, `updated`, `unchanged` ou `error`),
+  `external_id`, `merged_into` (o id enviado é extra: este é o principal), `error` (código
+  estável) e `code` (status HTTP que o item teria sozinho); mais `summary` com os contadores.
+- **Um item com erro não desfaz os outros.** Lista vazia devolve o resultado zerado sem fazer
+  requisição.
+
+## Identificadores extras
+
+Ligue o id de **outro** sistema seu (CRM, e-commerce…) ao mesmo cadastro, sem duplicar. É
+idempotente; se o id já pertence a outro cadastro, a API responde 409 `IDENTIFIER_IN_USE`
+(`ConflictError`).
+
+```python
+c = bf.customers.identifiers.add("erp-1042", "crm-88", label="CRM")
+print(c["identifiers"])   # [{"external_id": "crm-88", "label": "CRM", "source": "api"}]
+bf.customers.identifiers.remove("erp-1042", "crm-88")
+
+bf.people.identifiers.add("app-77", "crm-p5")       # sem label
+bf.people.identifiers.remove("app-77", "crm-p5")
+```
+
+Num lote, um item enviado com um id extra volta com o principal em `merged_into`.
+
+## Sincronizar clientes e usuários do seu sistema
+
+**Ids com o prefixo do sistema, sem `:`** — a assinatura do widget recusa `:`. Use `-` como
+separador (`erp-1042` para clientes, `app-77` para pessoas) ou UUIDs puros. Assim vários
+sistemas seus convivem no mesmo bFocus sem colisão.
+
+**1. Carga inicial (no deploy da integração)**: clientes em fatias de 500 → vínculo com o produto →
+pessoas em fatias de 500. Confira `summary["error"]` e registre os itens com erro.
+
+```python
+import logging
+import os
+
+from bfocus import BATCH_MAX, Bfocus
+
+log = logging.getLogger("bfocus-sync")
+bf = Bfocus(os.environ["BFOCUS_API_KEY"])  # escopo customers:write
+
+
+def em_fatias(itens, rodada):
+    for inicio in range(0, len(itens), BATCH_MAX):
+        fatia = itens[inicio:inicio + BATCH_MAX]
+        res = rodada(fatia)
+        if res["summary"]["error"]:
+            for r in res["results"]:
+                if r["status"] == "error":
+                    log.warning("bfocus: %s -> %s", fatia[r["index"]]["external_id"], r["error"])
+
+
+clientes = [{"external_id": f"erp-{c.id}", "name": c.nome, "document": c.cnpj}
+            for c in Cliente.objects.all()]
+em_fatias(clientes, bf.customers.batch)
+
+for c in clientes:
+    bf.customers.products.attach(c["external_id"], "erp-cloud")  # idempotente
+
+pessoas = [{"customer_external_id": f"erp-{u.cliente_id}", "external_id": f"app-{u.id}",
+            "name": u.nome, "email": u.email}
+           for u in Usuario.objects.all()]
+em_fatias(pessoas, bf.people.batch)
+```
+
+**2. No dia a dia**: cada mudança no seu sistema vira uma chamada.
+
+| No seu sistema | No bFocus |
+| --- | --- |
+| criou/alterou cliente | `bf.customers.upsert(...)` (+ `bf.customers.products.attach(...)` para ligar ao produto) |
+| criou/alterou usuário | `bf.people.upsert(...)` |
+| excluiu/desativou usuário | `bf.people.delete(...)` |
+| excluiu cliente | `bf.customers.delete(...)` |
+
+Se a resposta trouxer `merged_into`, atualize o id do seu lado.
+
+**Nunca bloqueie a requisição do seu usuário esperando o bFocus**: enfileire (job/outbox) e
+tente de novo com backoff. A SDK já repete 429/5xx com a mesma `Idempotency-Key`; a fila cobre
+indisponibilidades longas.
+
+```python
+# no seu código de aplicação: só enfileira
+def usuario_salvo(usuario):
+    fila.enqueue(sincronizar_usuario, usuario.id)
+
+
+# no worker (Celery, RQ, cron…): chama o bFocus; se falhar, a fila tenta de novo com backoff
+def sincronizar_usuario(usuario_id):
+    u = Usuario.objects.get(id=usuario_id)
+    if not u.ativo:
+        bf.people.delete(f"erp-{u.cliente_id}", f"app-{u.id}")
+        return
+    bf.people.upsert(f"erp-{u.cliente_id}", f"app-{u.id}", name=u.nome, email=u.email,
+                     access=True)
 ```
 
 ## Produtos
@@ -290,7 +476,8 @@ except BfocusError as err:
 ```
 
 Argumento inválido no seu código (chave vazia; parâmetro de caminho vazio, `"."` ou `".."`; `/`
-no `external_id` de um artigo) levanta `ValueError`/`TypeError` na hora, sem chamar a API.
+no `external_id` de um artigo; mais de 500 itens num `customers.batch`/`people.batch`; `:` no
+usuário da assinatura v2 do widget) levanta `ValueError`/`TypeError` na hora, sem chamar a API.
 
 ## Novas tentativas e idempotência
 
@@ -334,6 +521,26 @@ assinatura = sign_widget_identity(
 # HMAC-SHA256 em hex minúsculo de "v1:USR-1:ERP 1042" — entregue junto dos dois ids à página
 # que abre o widget.
 ```
+
+### Identidade v2 (com validade)
+
+A v2 carrega o instante da assinatura e expira: a API aceita de **7 dias atrás até 5 minutos à
+frente**. Gere a cada renderização da página e nunca guarde. Vai no mesmo lugar da v1 (o
+`userHash` do widget); a v1 continua aceita.
+
+```python
+from bfocus import sign_widget_identity_v2
+
+assinatura = sign_widget_identity_v2(
+    os.environ["BFOCUS_WIDGET_SECRET"],
+    user_external_id="app-77",          # SEM ":" (é o separador; a SDK levanta ValueError)
+    customer_external_id="erp-1042",
+)
+# "v2.<ts>.<hex>": ts = segundos unix de agora; hex = HMAC-SHA256 de "v2:<ts>:app-77:erp-1042"
+```
+
+Para testes, fixe o instante com `now=` (segundos unix `int`/`float` — não milissegundos — ou
+`datetime`; sem fuso é tratado como UTC).
 
 ## Versões
 
