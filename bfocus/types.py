@@ -36,6 +36,7 @@ __all__ = [
     "AgentPreview",
     "Deleted",
     "Person",
+    "PersonRevokeResult",
     "PersonUpsertResult",
     "Identifier",
     "CustomerWithIdentifiers",
@@ -228,6 +229,12 @@ class Customer(TypedDict):
     notes: Optional[str]
     custom_fields: List[CustomField]
     is_active: bool
+    #: Logotipo do cliente, como a equipe subiu no bFocus (``None`` = sem logotipo).
+    logo_url: Optional[str]
+    #: E-mails adicionais do cliente (o principal é ``email``).
+    extra_emails: List[str]
+    #: Telefones adicionais do cliente (o principal é ``phone``).
+    extra_phones: List[str]
     created_at: Optional[str]
     updated_at: Optional[str]
 
@@ -385,12 +392,30 @@ class Person(TypedDict):
     is_primary: bool
     customer_external_id: str
     custom_fields: List[CustomField]
+    #: Identificadores EXTRAS desta pessoa: os outros ids pelos quais ela também é encontrada.
+    #: É por aqui que você descobre que o id do SEU sistema virou apelido de outra ficha.
+    identifiers: List["Identifier"]
 
 
 class PersonUpsertResult(Person):
-    """Retorno de ``people.upsert``: a pessoa + ``status``."""
+    """Retorno de ``people.upsert``: a pessoa + ``status`` + ``linked``."""
 
     status: Literal["created", "updated", "unchanged"]
+    #: ``True`` = a pessoa JÁ EXISTIA em outro cliente e este envio a ligou também a este.
+    #: O cadastro é único e ela circula pelos dois; nada foi transferido nem duplicado.
+    linked: bool
+    #: Preenchido quando o id que você enviou é um APELIDO: este é o principal do cadastro.
+    merged_into: Optional[str]
+
+
+class PersonRevokeResult(Person):
+    """Retorno de ``people.delete``: a pessoa + se ela apenas SAIU deste cliente.
+
+    ``unlinked=True`` = ela continua com acesso, porque também é de outros clientes; o acesso é
+    do vínculo. ``False`` = era só deste cliente e foi desligada, como sempre.
+    """
+
+    unlinked: bool
 
 
 class Identifier(TypedDict):
@@ -424,6 +449,8 @@ class BatchItemResult(TypedDict):
     status: Literal["created", "updated", "unchanged", "error"]
     external_id: Optional[str]
     merged_into: Optional[str]
+    #: A pessoa já existia em outro cliente e este item a ligou também a este (cadastro único).
+    linked: bool
     error: Optional[str]
     code: Optional[int]
 

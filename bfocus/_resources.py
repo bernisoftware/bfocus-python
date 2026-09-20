@@ -52,6 +52,7 @@ from .types import (
     Person,
     PersonBatchItem,
     PersonIdentifiers,
+    PersonRevokeResult,
     PersonUpsertResult,
     Product,
     ProductRef,
@@ -654,7 +655,8 @@ class People(_Resource):
         ``PUT /customers/{customer_external_id}/people/{person_external_id}``. O ``status``
         do retorno diz ``"created"``, ``"updated"`` ou ``"unchanged"``. Se o e-mail (ou o
         telefone) já pertence a uma pessoa que chegou por outro caminho, ela é **adotada**
-        (nunca duplicada); a mesma pessoa informada com outro cliente é transferida.
+        (nunca duplicada); a mesma pessoa informada com outro cliente é LIGADA a ele também
+        (cadastro único em N clientes) e ``linked`` volta ``True``.
 
         Args:
             name: Obrigatório ao criar.
@@ -711,12 +713,13 @@ class People(_Resource):
         *,
         idempotency_key: Optional[str] = None,
         timeout: Optional[float] = None,
-    ) -> Person:
-        """Retira o acesso da pessoa (devolve a pessoa com ``access=False``).
+    ) -> PersonRevokeResult:
+        """Retira o acesso da pessoa NESTE cliente (devolve a pessoa com ``access=False``).
 
         ``DELETE /customers/{customer_external_id}/people/{person_external_id}``. A pessoa
         continua no histórico (chamados, conversas); :meth:`upsert` com ``access=True``
-        devolve o acesso.
+        devolve o acesso. O acesso é DO VÍNCULO: se ela também é de outros clientes, continua
+        ativa neles e a resposta volta com ``unlinked=True``.
         """
         cext = path_segment(customer_external_id, "customer_external_id")
         pid = path_segment(person_external_id, "person_external_id")
@@ -724,7 +727,7 @@ class People(_Resource):
             "DELETE", f"/customers/{cext}/people/{pid}",
             idempotency_key=idempotency_key, timeout=timeout,
         )
-        return cast(Person, data)
+        return cast(PersonRevokeResult, data)
 
     def batch(
         self,

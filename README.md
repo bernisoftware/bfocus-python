@@ -169,7 +169,11 @@ bf.people.upsert("erp-1042", "app-77", access=True)   # devolve o acesso
 
 - **Nunca duplica**: se o e-mail (ou o telefone) já pertence a uma pessoa que chegou por e-mail
   ou por outro sistema, ela é **adotada** e ganha o seu `external_id`.
-- A mesma pessoa informada com **outro cliente** é transferida para ele.
+- A mesma pessoa informada com **outro cliente** NÃO é transferida: ela é **ligada** também a
+  esse cliente e a resposta volta com `linked=True`. O cadastro é único e a mesma pessoa circula
+  por vários clientes e vários produtos.
+- **O acesso é do vínculo.** `delete` (e `access=False`) tira o acesso dela NESTE cliente, não nos
+  outros: `unlinked=True` na resposta quer dizer que ela segue ativa em algum outro.
 - `delete` **retira o acesso** (devolve a pessoa com `access=False`); ela continua no histórico
   de chamados e conversas. Um `upsert` com `access=True` devolve o acesso.
 - Como nos outros upserts, só o que você passa muda; `name` é obrigatório ao criar.
