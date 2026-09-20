@@ -221,7 +221,17 @@ class CustomField(TypedDict):
 class Customer(TypedDict):
     id: str
     external_id: str
+    #: O nome usado em tudo. Na PJ é o nome fantasia; a razão social fica em ``legal_name``.
     name: str
+    #: Tipo do CONTRATANTE: ``"pj"`` (empresa) ou ``"pf"`` (pessoa física); ``None`` = não dá
+    #: para saber. Cliente é a CONTA, não a pessoa: uma conta PF pode ter várias pessoas dentro.
+    kind: Optional[Literal["pj", "pf"]]
+    #: Só PJ.
+    legal_name: Optional[str]
+    state_registration: Optional[str]
+    municipal_registration: Optional[str]
+    #: Só PF: RG e órgão emissor (texto livre — o formato varia por estado).
+    id_document: Optional[str]
     document: Optional[str]
     email: Optional[str]
     phone: Optional[str]

@@ -421,6 +421,11 @@ class Customers(_Resource):
         *,
         name: MaybeUnset[Optional[str]] = UNSET,
         document: MaybeUnset[Optional[str]] = UNSET,
+        kind: MaybeUnset[Optional[str]] = UNSET,
+        legal_name: MaybeUnset[Optional[str]] = UNSET,
+        state_registration: MaybeUnset[Optional[str]] = UNSET,
+        municipal_registration: MaybeUnset[Optional[str]] = UNSET,
+        id_document: MaybeUnset[Optional[str]] = UNSET,
         email: MaybeUnset[Optional[str]] = UNSET,
         phone: MaybeUnset[Optional[str]] = UNSET,
         website: MaybeUnset[Optional[str]] = UNSET,
@@ -433,12 +438,22 @@ class Customers(_Resource):
 
         ``PUT /customers/{external_id}``. Só os campos informados mudam; ``None`` limpa.
         ``custom_fields``, quando enviado, **substitui** a lista inteira.
+
+        ``kind`` é o tipo do CONTRATANTE: ``"pj"`` (empresa) ou ``"pf"`` (pessoa física). Não
+        enviando, o bFocus deduz do documento. ``legal_name`` (razão social),
+        ``state_registration`` e ``municipal_registration`` são de PJ; ``id_document`` (RG), de
+        PF — mandar o do outro tipo não quebra nada, só não faz sentido.
         """
         ext = path_segment(external_id, "external_id")
         body = compact(
             {
                 "name": name,
                 "document": document,
+                "kind": kind,
+                "legal_name": legal_name,
+                "state_registration": state_registration,
+                "municipal_registration": municipal_registration,
+                "id_document": id_document,
                 "email": email,
                 "phone": phone,
                 "website": website,
