@@ -15,7 +15,9 @@ from bfocus import (
     UNSET,
     Bfocus,
     BfocusError,
+    ConflictError,
     NetworkError,
+    NotFoundError,
     Page,
     RateLimitError,
     ServerError,
@@ -435,6 +437,30 @@ class ErrorShapeTest(_ServerCase):
         self.assertIn("kb:write", err.message)
         self.assertIn("req-9", str(err))
         self.assertIsNone(err.retry_after)
+
+    def test_data_traz_o_dono_do_contato_tomado(self) -> None:
+        """409 acionável: `data` diz de QUEM é o e-mail, e a API repete em `validation`."""
+        dono = {"field": "email", "owner_external_id": "app-12", "owner_name": "Paula Reis",
+                "owner_customer_external_id": "erp-1042"}
+        bf = self.client([{
+            "status": 409, "headers": {},
+            "body": {"code": 409, "data": dono, "message": "PERSON_EMAIL_TAKEN",
+                     "error": "PERSON_EMAIL_TAKEN", "validation": dono, "request_id": "req-9"},
+        }])
+        with self.assertRaises(ConflictError) as ctx:
+            bf.people.upsert("erp-1042", "app-77", email="paula@padaria.example")
+        err = ctx.exception
+        self.assertEqual(err.code, "PERSON_EMAIL_TAKEN")
+        self.assertEqual(err.data, dono)
+        self.assertEqual(err.data["owner_customer_external_id"], "erp-1042")
+        self.assertEqual(err.validation, dono)
+
+    def test_data_vazio_quando_o_erro_nao_traz_detalhe(self) -> None:
+        bf = self.client([{"status": 404, "headers": {},
+                           "body": {"code": 404, "data": None, "error": "CUSTOMER_NOT_FOUND"}}])
+        with self.assertRaises(NotFoundError) as ctx:
+            bf.customers.get("erp-1042")
+        self.assertEqual(ctx.exception.data, {})
 
     def test_2xx_sem_envelope_e_invalid_response(self) -> None:
         bodies = [

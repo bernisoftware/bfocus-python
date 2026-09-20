@@ -142,6 +142,7 @@ def build_error(
     code: Optional[str] = None
     human: Optional[str] = None
     validation: Dict[str, Any] = {}
+    data: Dict[str, Any] = {}
     request_id: Optional[str] = None
 
     if isinstance(payload, dict):
@@ -154,6 +155,11 @@ def build_error(
             human = msg
         if isinstance(payload.get("validation"), dict):
             validation = payload["validation"]
+        # `data` é o detalhe estruturado do erro (de quem é o contato já usado, o dono de um
+        # identificador…). A API também o repete em `validation`, mas quem lê o erro precisa
+        # alcançá-lo sem depender dessa duplicação.
+        if isinstance(payload.get("data"), dict):
+            data = payload["data"]
         rid = payload.get("request_id")
         if isinstance(rid, str) and rid:
             request_id = rid
@@ -184,6 +190,7 @@ def build_error(
         status,
         request_id=request_id,
         validation=validation,
+        data=data,
         retry_after=retry_after,
         required_scope=required_scope,
         body=payload if payload is not None else (text or None),

@@ -124,7 +124,12 @@ class _CustomFieldInputRequired(TypedDict):
 
 
 class CustomFieldInput(_CustomFieldInputRequired, total=False):
-    """Campo personalizado de cliente. Enviar a lista SUBSTITUI a lista inteira."""
+    """Campo personalizado de cliente **ou de pessoa**. Enviar a lista SUBSTITUI a lista inteira.
+
+    Em pessoa, ``visibility`` **não** é aceito aqui: quem vê o campo é decisão do bFocus e é
+    preservada entre sincronizações (o seu sistema não rebaixa nem promove a exposição de um
+    dado sem querer).
+    """
 
     label: str
     type: Literal[
@@ -188,6 +193,10 @@ class PersonBatchItem(_PersonBatchItemRequired, total=False):
     is_primary: Optional[bool]
     extra_emails: Optional[List[str]]
     extra_phones: Optional[List[str]]
+    custom_fields: Optional[List[CustomFieldInput]]
+    #: Campos a APAGAR nesta pessoa (hoje ``"email"`` e/ou ``"phone"``). Apagar é explícito:
+    #: ``None``, lista vazia ou chave ausente continuam significando "não mexe".
+    clear: Optional[List[str]]
 
 
 class AgentTurn(TypedDict):
@@ -375,6 +384,7 @@ class Person(TypedDict):
     access: bool
     is_primary: bool
     customer_external_id: str
+    custom_fields: List[CustomField]
 
 
 class PersonUpsertResult(Person):

@@ -150,12 +150,12 @@ def _identifier_label(label: Any) -> Optional[Dict[str, Any]]:
     return None if label is UNSET else {"label": label}
 
 
-def _strings(value: Any) -> Any:
+def _strings(value: Any, field: str = "extra_emails/extra_phones") -> Any:
     """Sequência de strings → lista (preserva UNSET/None). String solta é erro (viraria letras)."""
     if value is UNSET or value is None:
         return value
     if isinstance(value, (str, bytes)):
-        raise TypeError("extra_emails/extra_phones precisam ser uma lista de strings.")
+        raise TypeError(f"{field} precisa ser uma lista de strings.")
     return list(value)
 
 
@@ -554,6 +554,26 @@ class Customers(_Resource):
 class PeopleIdentifiers(_Resource):
     """Identificadores extras de uma pessoa — ``client.people.identifiers``."""
 
+    def list(
+        self, person_external_id: str, *, timeout: Optional[float] = None
+    ) -> PersonIdentifiers:
+        """Todos os identificadores da pessoa: o principal + os extras.
+
+        ``GET /people/{person_external_id}/identifiers``. Escopo ``customers:read``. Aceita
+        no caminho o identificador **principal ou qualquer um dos extras** — ``external_id``
+        no retorno é sempre o principal.
+
+        É a fonte de verdade para **reconciliar**: :meth:`People.list` mostra só o
+        identificador principal de cada pessoa, então um id que virou extra (porque dois
+        cadastros seus eram a mesma pessoa) some de lá sem ter sumido do cadastro. Sem esta
+        leitura era preciso ESCREVER (um ``add``) para descobrir o que tinha acontecido.
+
+        Pessoa inexistente: ``NotFoundError`` com ``code == "PERSON_NOT_FOUND"``.
+        """
+        pid = path_segment(person_external_id, "person_external_id")
+        data, _ = self._t.request("GET", f"/people/{pid}/identifiers", timeout=timeout)
+        return cast(PersonIdentifiers, data)
+
     def add(
         self,
         person_external_id: str,
@@ -624,6 +644,8 @@ class People(_Resource):
         is_primary: MaybeUnset[Optional[bool]] = UNSET,
         extra_emails: MaybeUnset[Optional[Sequence[str]]] = UNSET,
         extra_phones: MaybeUnset[Optional[Sequence[str]]] = UNSET,
+        custom_fields: MaybeUnset[Optional[Sequence[CustomFieldInput]]] = UNSET,
+        clear: MaybeUnset[Optional[Sequence[str]]] = UNSET,
         idempotency_key: Optional[str] = None,
         timeout: Optional[float] = None,
     ) -> PersonUpsertResult:
@@ -640,6 +662,19 @@ class People(_Resource):
                 acesso retirado por :meth:`delete`.
             extra_emails: E-mails adicionais (somam aos que já existem).
             extra_phones: Telefones adicionais (somam aos que já existem).
+            custom_fields: Campos personalizados da pessoa, ``{"key", "label", "value"}``.
+                Ao contrário de ``extra_emails``/``extra_phones``, a lista **substitui** a
+                lista inteira: mande o que o seu sistema tem HOJE, porque campo que ficou de
+                fora é REMOVIDO. Omitir o argumento não mexe em nada. A ``visibility`` é
+                decidida no bFocus e preservada entre sincronizações.
+            clear: Campos a **apagar** nesta pessoa — hoje ``["email"]``, ``["phone"]`` ou os
+                dois. Apagar é EXPLÍCITO: ``email=None`` (e a lista vazia, e omitir o
+                argumento) continua significando "não mexe", nunca "apague". Campo fora da
+                lista aceita é RECUSADO pela API (422 ``PERSON_CLEAR_FIELD_INVALID``), não
+                ignorado. E só se limpa a PRÓPRIA ficha: se você alcançou a pessoa por um
+                identificador EXTRA, a API recusa (409 ``PERSON_CLEAR_NOT_OWN_RECORD``) —
+                apagar contato de ficha alcançada por apelido seria apagar dado de outro
+                sistema.
         """
         cext = path_segment(customer_external_id, "customer_external_id")
         pid = path_segment(person_external_id, "person_external_id")
@@ -653,6 +688,8 @@ class People(_Resource):
                 "is_primary": is_primary,
                 "extra_emails": _strings(extra_emails),
                 "extra_phones": _strings(extra_phones),
+                "custom_fields": _dicts(custom_fields),
+                "clear": _strings(clear, "clear"),
             }
         )
         data, _ = self._t.request(
@@ -712,9 +749,11 @@ class People(_Resource):
             customer = _required_id(op, index, item, "customer_external_id")
             _required_id(op, index, item, "external_id")
             person = compact({k: v for k, v in item.items() if k != "customer_external_id"})
-            for field in ("extra_emails", "extra_phones"):
+            for field in ("extra_emails", "extra_phones", "clear"):
                 if field in person:
-                    person[field] = _strings(person[field])
+                    person[field] = _strings(person[field], field)
+            if "custom_fields" in person:
+                person["custom_fields"] = _dicts(person["custom_fields"])
             body_items.append({"customer_external_id": customer, "person": person})
         if not body_items:
             return _empty_batch()

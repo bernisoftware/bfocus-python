@@ -62,6 +62,7 @@ OPS: Dict[str, Callable[[Bfocus], Callable[..., Any]]] = {
     "people.list": lambda bf: bf.people.list,
     "people.delete": lambda bf: bf.people.delete,
     "people.batch": lambda bf: bf.people.batch,
+    "people.identifiers.list": lambda bf: bf.people.identifiers.list,
     "people.identifiers.add": lambda bf: bf.people.identifiers.add,
     "people.identifiers.remove": lambda bf: bf.people.identifiers.remove,
     "products.list": lambda bf: bf.products.list,

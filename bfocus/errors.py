@@ -38,6 +38,13 @@ class BfocusError(Exception):
             ``X-Request-Id`` que a SDK enviou (a API ecoa o do cliente) — sempre preenchido;
             informe-o ao suporte.
         validation: Mapa campo → motivo (erros de validação); ``{}`` quando não há.
+        data: O ``data`` do corpo do erro — o detalhe estruturado que alguns erros trazem;
+            ``{}`` quando não há. É onde vem, por exemplo, de quem é o contato já usado num
+            409 ``PERSON_EMAIL_TAKEN``/``PERSON_PHONE_TAKEN`` (``field``,
+            ``owner_external_id``, ``owner_name``, ``owner_customer_external_id``) e o
+            ``owner`` de um ``IDENTIFIER_IN_USE``. A API repete esse detalhe em
+            :attr:`validation`, por compatibilidade com as SDKs que ainda não expunham
+            ``data``.
         retry_after: Segundos sugeridos pelo header ``Retry-After`` (só em 429).
         required_scope: Escopo que faltou na chave (header ``X-Required-Scope``, só em 403).
         body: Corpo da resposta já decodificado (dict), ou o texto cru quando não é JSON.
@@ -54,6 +61,7 @@ class BfocusError(Exception):
         retry_after: Optional[float] = None,
         required_scope: Optional[str] = None,
         body: Any = None,
+        data: Optional[Dict[str, Any]] = None,
     ) -> None:
         super().__init__(message)
         self.code = code
@@ -61,6 +69,7 @@ class BfocusError(Exception):
         self.status = status
         self.request_id = request_id
         self.validation: Dict[str, Any] = dict(validation or {})
+        self.data: Dict[str, Any] = dict(data or {})
         self.retry_after = retry_after
         self.required_scope = required_scope
         self.body = body
