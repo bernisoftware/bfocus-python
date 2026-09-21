@@ -194,6 +194,9 @@ class PersonBatchItem(_PersonBatchItemRequired, total=False):
     name: Optional[str]
     email: Optional[str]
     phone: Optional[str]
+    #: CPF da pessoa (com ou sem máscara). A pessoa é ÚNICA: o mesmo CPF é sempre o mesmo
+    #: cadastro. ``None``/vazio não apaga. Ver ``people.upsert``.
+    document: Optional[str]
     role: Optional[str]
     access: Optional[bool]
     is_primary: Optional[bool]
@@ -402,6 +405,8 @@ class Person(TypedDict):
     name: str
     email: Optional[str]
     phone: Optional[str]
+    #: CPF da pessoa, só os 11 dígitos (``None`` = não informado).
+    document: Optional[str]
     role: Optional[str]
     access: bool
     is_primary: bool

@@ -229,6 +229,30 @@ Três regras que parecem contraintuitivas e são de propósito:
 
 Vale no `people.upsert` e no `people.batch` (`{"clear": ["phone"]}` no item).
 
+### CPF: a pessoa é única
+
+`document` é o CPF da pessoa. É por ele que dois sistemas que conhecem a mesma pessoa por ids
+diferentes chegam ao MESMO cadastro.
+
+```python
+p = bf.people.upsert("erp-1042", "app-91", name="Paula Reis", document="529.982.247-25")
+print(p["document"])      # "52998224725"
+print(p["merged_into"])   # "app-77" se o CPF já era de outra ficha; None se não
+```
+
+Regras (valem no upsert e no lote):
+
+- **A pessoa é única.** O mesmo CPF é sempre o mesmo cadastro, em qualquer produto e cliente. Mande
+  com ou sem máscara; a resposta traz só os 11 dígitos em `document`.
+- **Id desconhecido + CPF que já existe** → a API acha a ficha, o seu id vira identificador extra
+  dela e a resposta vem com `merged_into` = o id principal. Guarde esse id do seu lado.
+- **Id de uma ficha + CPF de OUTRA** → as duas são mescladas na hora; `merged_into` = a que tinha o CPF.
+- **`document=None` NÃO apaga** o CPF (e `document` não é campo do `clear`). Omitir é o mesmo que "não mexe".
+- Erros: 422 `PERSON_DOCUMENT_INVALID` (CPF inválido, `ValidationError`) e 409 `PERSON_DOCUMENT_CONFLICT` (a
+  ficha já tem OUTRO CPF — a API nunca troca sozinho; `ConflictError`).
+
+No lote: `{"document": "529.982.247-25"}` no item.
+
 ### Contato já usado: um 409 que você consegue resolver
 
 `PERSON_EMAIL_TAKEN` e `PERSON_PHONE_TAKEN` (409) não são "tente de novo": o e-mail (ou o
@@ -268,10 +292,13 @@ except ConflictError as err:
         avisar_cadastro(err.code, dono)
 ```
 
-`PERSON_CONTACT_OTHER_CUSTOMER` (409) é o mesmo assunto pelo outro lado, e é **recusa
-definitiva**: a API não move mais uma pessoa de um cliente para outro só porque o e-mail (ou o
-telefone) casou. Repetir a chamada não resolve — trate como caso para o cadastro, nunca como
-falha temporária.
+`PERSON_CONTACT_OTHER_CUSTOMER` (409) é o mesmo assunto pelo outro lado: o e-mail (ou o telefone) é
+de uma pessoa de **outro cliente**. A API **não liga duas fichas sozinha** só porque o contato casou
+— dois cadastros podem dividir um e-mail ou um telefone, e ligar por palpite já destruiu fichas.
+Repetir a chamada não resolve. Se for **mesmo a mesma pessoa** (confirme antes), o erro traz o dono
+nos dados, como os outros dois conflitos: registre o seu id como identificador extra da ficha dele
+(`owner_external_id`) e o próximo envio **liga** a pessoa ao seu cliente (`linked: true`), sem
+sobrescrever os dados da outra ficha.
 
 ## Lotes
 

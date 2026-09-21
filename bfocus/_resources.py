@@ -655,6 +655,7 @@ class People(_Resource):
         name: MaybeUnset[Optional[str]] = UNSET,
         email: MaybeUnset[Optional[str]] = UNSET,
         phone: MaybeUnset[Optional[str]] = UNSET,
+        document: MaybeUnset[Optional[str]] = UNSET,
         role: MaybeUnset[Optional[str]] = UNSET,
         access: MaybeUnset[Optional[bool]] = UNSET,
         is_primary: MaybeUnset[Optional[bool]] = UNSET,
@@ -675,6 +676,14 @@ class People(_Resource):
 
         Args:
             name: Obrigatório ao criar.
+            document: CPF da pessoa, com ou sem máscara (a resposta traz só os 11 dígitos).
+                A PESSOA É ÚNICA: o mesmo CPF é sempre o mesmo cadastro, em qualquer produto.
+                Id desconhecido + CPF de uma ficha existente → a resposta vem com
+                ``merged_into`` = id principal dela (o seu id vira identificador extra). Id de
+                uma ficha + CPF de OUTRA → as duas são mescladas na hora (``merged_into`` = a
+                que tinha o CPF). ``None``/vazio NÃO apaga (não é campo do ``clear``). Erros:
+                422 ``PERSON_DOCUMENT_INVALID`` (CPF inválido) e 409
+                ``PERSON_DOCUMENT_CONFLICT`` (a ficha já tem OUTRO CPF — nunca troca sozinho).
             access: Acesso ao widget/portal (padrão ao criar: ``True``). ``True`` devolve o
                 acesso retirado por :meth:`delete`.
             extra_emails: E-mails adicionais (somam aos que já existem).
@@ -700,6 +709,7 @@ class People(_Resource):
                 "name": name,
                 "email": email,
                 "phone": phone,
+                "document": document,
                 "role": role,
                 "access": access,
                 "is_primary": is_primary,
