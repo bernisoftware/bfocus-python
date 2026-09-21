@@ -167,6 +167,11 @@ class CustomerBatchItem(_CustomerBatchItemRequired, total=False):
 
     name: Optional[str]
     document: Optional[str]
+    kind: Optional[Literal["pj", "pf"]]
+    legal_name: Optional[str]
+    state_registration: Optional[str]
+    municipal_registration: Optional[str]
+    id_document: Optional[str]
     email: Optional[str]
     phone: Optional[str]
     website: Optional[str]
